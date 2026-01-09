@@ -1,0 +1,183 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install frontend dependencies
+        run: |
+          cd crates/settings-app/ui
+          npm ci
+
+      - name: Build mcp-server (Apple Silicon)
+        run: cargo build --release --bin mcp-server --target aarch64-apple-darwin
+
+      - name: Build mcp-server (Intel)
+        run: cargo build --release --bin mcp-server --target x86_64-apple-darwin
+
+      - name: Create universal mcp-server binary
+        run: |
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/mcp-server \
+            target/x86_64-apple-darwin/release/mcp-server \
+            -output target/universal-apple-darwin/release/mcp-server
+
+      - name: Prepare sidecar binaries for Tauri
+        run: |
+          mkdir -p target/release
+          cp target/aarch64-apple-darwin/release/mcp-server target/release/mcp-server-aarch64-apple-darwin
+          cp target/x86_64-apple-darwin/release/mcp-server target/release/mcp-server-x86_64-apple-darwin
+
+      - name: Build Settings app (Apple Silicon)
+        run: |
+          cd crates/settings-app
+          cargo tauri build --target aarch64-apple-darwin
+
+      - name: Build Settings app (Intel)
+        run: |
+          cd crates/settings-app
+          cargo tauri build --target x86_64-apple-darwin
+
+      - name: Create universal app bundle
+        run: |
+          AARCH64_APP="target/aarch64-apple-darwin/release/bundle/macos/FilingExplorer Settings.app"
+          X86_64_APP="target/x86_64-apple-darwin/release/bundle/macos/FilingExplorer Settings.app"
+          UNIVERSAL_APP="target/universal-apple-darwin/release/bundle/macos/FilingExplorer Settings.app"
+
+          mkdir -p "$(dirname "$UNIVERSAL_APP")"
+          cp -R "$AARCH64_APP" "$UNIVERSAL_APP"
+
+          lipo -create \
+            "$AARCH64_APP/Contents/MacOS/filing-explorer-settings" \
+            "$X86_64_APP/Contents/MacOS/filing-explorer-settings" \
+            -output "$UNIVERSAL_APP/Contents/MacOS/filing-explorer-settings"
+
+          lipo -create \
+            "$AARCH64_APP/Contents/MacOS/mcp-server" \
+            "$X86_64_APP/Contents/MacOS/mcp-server" \
+            -output "$UNIVERSAL_APP/Contents/MacOS/mcp-server"
+
+      - name: Import signing certificate
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" build.keychain
+          rm certificate.p12
+
+      - name: Sign app bundle
+        if: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          UNIVERSAL_APP="target/universal-apple-darwin/release/bundle/macos/FilingExplorer Settings.app"
+
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "$UNIVERSAL_APP/Contents/MacOS/mcp-server"
+
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "$UNIVERSAL_APP/Contents/MacOS/filing-explorer-settings"
+
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "$UNIVERSAL_APP"
+
+      - name: Extract version from tag
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Create DMG
+        run: |
+          UNIVERSAL_APP="target/universal-apple-darwin/release/bundle/macos/FilingExplorer Settings.app"
+          DMG_DIR="target/universal-apple-darwin/release/bundle/dmg"
+          mkdir -p "$DMG_DIR"
+
+          DMG_PATH="$DMG_DIR/FilingExplorer.Settings_${VERSION}_universal.dmg"
+
+          hdiutil create -volname "FilingExplorer Settings" \
+            -srcfolder "$UNIVERSAL_APP" \
+            -ov -format UDZO \
+            "$DMG_PATH"
+
+          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
+
+      - name: Sign DMG
+        if: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          codesign --force --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "$DMG_PATH"
+
+      - name: Notarize DMG
+        if: ${{ secrets.APPLE_ID != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: ${{ env.DMG_PATH }}
+
+  release:
+    needs: [build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          draft: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

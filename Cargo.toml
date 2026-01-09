@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/mcp-server",
+    "crates/settings-app/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Giant Octopus, LLC <hello@giantoctopus.ink>"]
+license = "MIT"
+repository = "https://github.com/giantoctopus/filing-explorer-mcp"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "gzip", "deflate"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Document extraction
+pdf-extract = "0.7"
+scraper = "0.21"
+quick-xml = "0.37"
+
+# Config management
+directories = "5.0"
+
+# Rate limiting
+governor = "0.8"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Internal crates
+filing-explorer-core = { path = "crates/core" }

@@ -1,0 +1,40 @@
+[package]
+name = "filing-explorer-settings"
+version = "0.1.0"
+description = "FilingExplorer Settings - Configure API token and SEC email"
+authors = ["Giant Octopus, LLC <hello@giantoctopus.ink>"]
+license = "MIT"
+repository = "https://github.com/giantoctopus/filing-explorer-mcp"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.3", features = [] }
+
+[dependencies]
+# Internal crates
+filing-explorer-core = { path = "../../core" }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# Serialization
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+
+# HTTP client for validation
+reqwest = { version = "0.12", features = ["json"] }
+
+# Logging
+log = "0.4"
+
+# Path resolution
+dirs = "5.0"
+
+# Tauri
+tauri = { version = "2.9.5", features = ["devtools"] }
+tauri-plugin-log = "2"

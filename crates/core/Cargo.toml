@@ -1,0 +1,41 @@
+[package]
+name = "filing-explorer-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Document extraction
+pdf-extract = { workspace = true }
+scraper = { workspace = true }
+quick-xml = { workspace = true }
+
+# Config management
+directories = { workspace = true }
+
+# Rate limiting
+governor = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Schema generation for MCP tools
+schemars = "0.8"
+
+# Lazy initialization for static data
+lazy_static = "1.5"
