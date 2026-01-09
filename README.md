@@ -17,7 +17,7 @@ A native [Model Context Protocol](https://modelcontextprotocol.io/) server that 
 
 ### macOS
 
-1. Download the latest `.dmg` from [Releases](https://github.com/FilingExplorer/filing-explorer-mcp/releases)
+1. Download the latest `.dmg` from [Releases](https://github.com/FilingExplorer/filingexplorer_mcp_native/releases)
 2. Open the DMG and drag **FilingExplorer Settings** to Applications
 3. Open the app and enter your [FilingExplorer API token](https://filingexplorer.com/api-keys)
 4. To use the tools that fetch documents directly from the SEC, enter your email you@your-company-domain.com -- (Email address with private domain required by SEC for EDGAR access).
