@@ -29,6 +29,9 @@ jobs:
           cd crates/settings-app/ui
           npm ci
 
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked
+
       - name: Build mcp-server (Apple Silicon)
         run: cargo build --release --bin mcp-server --target aarch64-apple-darwin
 
