@@ -82,6 +82,32 @@ impl JsonRpcResponse {
 fn build_tool_definitions() -> Value {
     json!([
         {
+            "name": "search",
+            "description": "Unified search across companies, securities, and Form 13-F institutional filers. Use this to find any entity by name, ticker, CIK, or CUSIP before using other tools.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "q": {
+                        "type": "string",
+                        "description": "Search query (name, ticker, CIK, CUSIP, or ticker:exchange)"
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Comma-separated entity types to search: company, security, filer (default: all)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results per type (default: 10, max: 50)"
+                    },
+                    "include_inactive": {
+                        "type": "boolean",
+                        "description": "Include inactive/dormant records (default: false)"
+                    }
+                },
+                "required": ["q"]
+            }
+        },
+        {
             "name": "list_tool_categories",
             "description": "List all available tool categories. Use this first to discover what capabilities are available.",
             "inputSchema": {
@@ -244,6 +270,7 @@ impl McpServer {
 
     async fn execute_tool(&self, name: &str, args: Value) -> Result<String, String> {
         match name {
+            "search" => self.search(args).await,
             "list_tool_categories" => self.handle_list_tool_categories(args).await,
             "search_tools" => self.handle_search_tools(args).await,
             "execute_tool" => self.handle_execute_tool(args).await,
@@ -346,6 +373,32 @@ impl McpServer {
     // TOOL IMPLEMENTATIONS
     // =========================================================================
 
+    async fn search(&self, args: Value) -> Result<String, String> {
+        let state = self.state.read().await;
+        let client = state.ensure_api_client()?;
+
+        let q = args
+            .get("q")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing required parameter: q")?;
+
+        let mut params = std::collections::HashMap::new();
+        params.insert("q".to_string(), q.to_string());
+
+        if let Some(v) = args.get("type").and_then(|v| v.as_str()) {
+            params.insert("type".to_string(), v.to_string());
+        }
+        if let Some(v) = args.get("limit").and_then(|v| v.as_i64()) {
+            params.insert("limit".to_string(), v.to_string());
+        }
+        if let Some(v) = args.get("include_inactive").and_then(|v| v.as_bool()) {
+            params.insert("include_inactive".to_string(), v.to_string());
+        }
+
+        let result: Value = client.get("search", Some(params)).await.map_err(|e| e.to_string())?;
+        Ok(serde_json::to_string_pretty(&result).unwrap())
+    }
+
     async fn get_company_financials(&self, args: Value) -> Result<String, String> {
         let state = self.state.read().await;
         let client = state.ensure_api_client()?;
@@ -425,7 +478,7 @@ impl McpServer {
             params.insert("limit".to_string(), v.to_string());
         }
 
-        let result: Value = client.get("form13f/submissions", Some(params)).await.map_err(|e| e.to_string())?;
+        let result: Value = client.get("forms/13f", Some(params)).await.map_err(|e| e.to_string())?;
         Ok(serde_json::to_string_pretty(&result).unwrap())
     }
 
@@ -446,7 +499,7 @@ impl McpServer {
             params.insert("limit".to_string(), v.to_string());
         }
 
-        let endpoint = format!("form13f/submissions/{}", filer_cik);
+        let endpoint = format!("forms/13f/{}", filer_cik);
         let result: Value = client.get(&endpoint, Some(params)).await.map_err(|e| e.to_string())?;
         Ok(serde_json::to_string_pretty(&result).unwrap())
     }
@@ -460,7 +513,7 @@ impl McpServer {
             .and_then(|v| v.as_str())
             .ok_or("Missing required parameter: accession_number")?;
 
-        let endpoint = format!("form4/{}", accession);
+        let endpoint = format!("forms/4/{}", accession);
         let result: Value = client.get(&endpoint, None).await.map_err(|e| e.to_string())?;
         Ok(serde_json::to_string_pretty(&result).unwrap())
     }
@@ -479,7 +532,7 @@ impl McpServer {
             params.insert("limit".to_string(), v.to_string());
         }
 
-        let endpoint = format!("etf/{}/holdings", identifier);
+        let endpoint = format!("etfs/{}/holdings", identifier);
         let result: Value = client.get(&endpoint, Some(params)).await.map_err(|e| e.to_string())?;
         Ok(serde_json::to_string_pretty(&result).unwrap())
     }
@@ -499,7 +552,7 @@ impl McpServer {
             params.insert("page[size]".to_string(), v.to_string());
         }
 
-        let result: Value = client.get("form-adv/firms", Some(params)).await.map_err(|e| e.to_string())?;
+        let result: Value = client.get("forms/adv/firms", Some(params)).await.map_err(|e| e.to_string())?;
         Ok(serde_json::to_string_pretty(&result).unwrap())
     }
 
@@ -517,7 +570,7 @@ impl McpServer {
             params.insert("include".to_string(), v.to_string());
         }
 
-        let endpoint = format!("form-adv/firms/{}", crd);
+        let endpoint = format!("forms/adv/firms/{}", crd);
         let result: Value = client.get(&endpoint, Some(params)).await.map_err(|e| e.to_string())?;
         Ok(serde_json::to_string_pretty(&result).unwrap())
     }
@@ -537,7 +590,7 @@ impl McpServer {
             params.insert("page".to_string(), v.to_string());
         }
 
-        let result: Value = client.get("lobbying/client-performance", Some(params)).await.map_err(|e| e.to_string())?;
+        let result: Value = client.get("lobbying/client_performance", Some(params)).await.map_err(|e| e.to_string())?;
         Ok(serde_json::to_string_pretty(&result).unwrap())
     }
 
