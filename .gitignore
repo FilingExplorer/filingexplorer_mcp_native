@@ -43,6 +43,9 @@ Desktop.ini
 *.pem
 *.p12
 
+# API specs (local reference only)
+swagger.yaml
+
 # Logs
 *.log
 npm-debug.log*
