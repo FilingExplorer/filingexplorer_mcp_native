@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { open } from '@tauri-apps/plugin-shell';
   import { onMount } from 'svelte';
 
   interface ConfigResponse {
@@ -14,8 +15,10 @@
   }
 
   interface StatusResponse {
-    claude_configured: boolean;
-    claude_config_path: string | null;
+    claude_desktop_configured: boolean;
+    claude_desktop_config_path: string | null;
+    claude_code_configured: boolean;
+    claude_code_config_path: string | null;
     mcp_server_path: string | null;
     mcp_server_exists: boolean;
     api_token_set: boolean;
@@ -102,6 +105,19 @@
     }
   }
 
+  async function configureClaudeCode() {
+    isLoading = true;
+    try {
+      const result: ValidationResponse = await invoke('configure_claude_code');
+      showStatus(result.message, result.success ? 'success' : 'error');
+      await checkStatus();
+    } catch (e) {
+      showStatus(`Failed to configure Claude Code: ${e}`, 'error');
+    } finally {
+      isLoading = false;
+    }
+  }
+
   function showStatus(message: string, type: 'success' | 'error' | 'info') {
     statusMessage = message;
     statusType = type;
@@ -111,8 +127,12 @@
     }, 5000);
   }
 
+  function openExternal(url: string) {
+    open(url);
+  }
+
   // Computed: is everything configured?
-  $: allConfigured = status?.claude_configured && status?.mcp_server_exists && status?.api_token_set && status?.sec_email_set;
+  $: allConfigured = (status?.claude_desktop_configured || status?.claude_code_configured) && status?.mcp_server_exists && status?.api_token_set && status?.sec_email_set;
 </script>
 
 <main>
@@ -133,12 +153,16 @@
             <span class="indicator">{status.sec_email_set ? '✓' : '○'}</span>
             <span>SEC Email</span>
           </div>
-          <div class="status-item" class:ok={status.claude_configured && status.mcp_server_exists} class:missing={!status.claude_configured || !status.mcp_server_exists}>
-            <span class="indicator">{status.claude_configured && status.mcp_server_exists ? '✓' : '○'}</span>
+          <div class="status-item" class:ok={status.claude_desktop_configured && status.mcp_server_exists} class:missing={!status.claude_desktop_configured || !status.mcp_server_exists}>
+            <span class="indicator">{status.claude_desktop_configured && status.mcp_server_exists ? '✓' : '○'}</span>
             <span>Claude Desktop</span>
           </div>
+          <div class="status-item" class:ok={status.claude_code_configured && status.mcp_server_exists} class:missing={!status.claude_code_configured || !status.mcp_server_exists}>
+            <span class="indicator">{status.claude_code_configured && status.mcp_server_exists ? '✓' : '○'}</span>
+            <span>Claude Code</span>
+          </div>
         </div>
-        {#if status.claude_configured && !status.mcp_server_exists}
+        {#if (status.claude_desktop_configured || status.claude_code_configured) && !status.mcp_server_exists}
           <p class="status-warning">MCP server binary not found at configured path</p>
         {/if}
       </section>
@@ -164,7 +188,7 @@
           </button>
         </div>
         <p class="help-text">
-          Get your API token from <a href="https://filingexplorer.com/settings" target="_blank" rel="noreferrer">filingexplorer.com/settings</a>
+          Get your API token from <button class="link-button" on:click={() => openExternal('https://www.filingexplorer.com/api-keys')}>filingexplorer.com/api-keys</button>
         </p>
       </div>
     </section>
@@ -210,13 +234,18 @@
     </div>
 
     <section class="section claude-section">
-      <h2>Claude Desktop Integration</h2>
+      <h2>Claude Integration</h2>
       <p class="section-description">
-        Automatically add FilingExplorer to your Claude Desktop configuration.
+        Add FilingExplorer to Claude Desktop and/or Claude Code (CLI).
       </p>
-      <button class="secondary full-width" on:click={configureClaudeDesktop} disabled={isLoading}>
-        {status?.claude_configured ? 'Reconfigure Claude Desktop' : 'Configure Claude Desktop'}
-      </button>
+      <div class="claude-buttons">
+        <button class="secondary" on:click={configureClaudeDesktop} disabled={isLoading}>
+          {status?.claude_desktop_configured ? 'Reconfigure Desktop' : 'Configure Desktop'}
+        </button>
+        <button class="secondary" on:click={configureClaudeCode} disabled={isLoading}>
+          {status?.claude_code_configured ? 'Reconfigure Code' : 'Configure Code'}
+        </button>
+      </div>
       {#if status?.mcp_server_path}
         <p class="path-display">
           <span class="path-label">MCP Server:</span>
@@ -365,8 +394,18 @@
     margin-top: 0.5em;
   }
 
-  .help-text a {
+  .link-button {
+    background: none;
+    border: none;
     color: #646cff;
+    cursor: pointer;
+    padding: 0;
+    font-size: inherit;
+    text-decoration: underline;
+  }
+
+  .link-button:hover {
+    color: #535bf2;
   }
 
   .actions {
@@ -410,6 +449,15 @@
     margin-top: 1.5em;
     border-top: 1px solid #333;
     padding-top: 1.5em;
+  }
+
+  .claude-buttons {
+    display: flex;
+    gap: 0.75em;
+  }
+
+  .claude-buttons button {
+    flex: 1;
   }
 
   .path-display {

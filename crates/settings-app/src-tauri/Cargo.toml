@@ -38,3 +38,4 @@ dirs = "5.0"
 # Tauri
 tauri = { version = "2.9.5", features = ["devtools"] }
 tauri-plugin-log = "2"
+tauri-plugin-shell = "2"
