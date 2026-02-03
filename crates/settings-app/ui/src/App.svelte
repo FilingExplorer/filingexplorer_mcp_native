@@ -1,40 +1,30 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { open } from '@tauri-apps/plugin-shell';
   import { onMount } from 'svelte';
+  import { debounce } from './lib/debounce';
+  import type { ConfigResponse, StatusResponse, Tab, TokenValidationStatus } from './lib/types';
 
-  interface ConfigResponse {
-    api_token: string | null;
-    sec_user_agent_name: string | null;
-    sec_user_agent_email: string | null;
-  }
+  import TabBar from './components/TabBar.svelte';
+  import StatusPanel from './components/StatusPanel.svelte';
+  import ApiTokenInput from './components/ApiTokenInput.svelte';
+  import SecConfigSection from './components/SecConfigSection.svelte';
+  import BasicInstall from './components/BasicInstall.svelte';
+  import AdvancedConfigs from './components/AdvancedConfigs.svelte';
+  import ToolDocs from './components/ToolDocs.svelte';
 
-  interface ValidationResponse {
-    success: boolean;
-    message: string;
-  }
+  let activeTab = $state<Tab>('basic');
 
-  interface StatusResponse {
-    claude_desktop_configured: boolean;
-    claude_desktop_config_path: string | null;
-    claude_code_configured: boolean;
-    claude_code_config_path: string | null;
-    mcp_server_path: string | null;
-    mcp_server_exists: boolean;
-    api_token_set: boolean;
-    sec_email_set: boolean;
-  }
+  // Config state
+  let apiToken = $state('');
+  let secName = $state('');
+  let secEmail = $state('');
+  let tokenStatus = $state<TokenValidationStatus>('idle');
 
-  let apiToken = '';
-  let secEmail = '';
-  let secName = '';
-  let statusMessage = '';
-  let statusType: 'success' | 'error' | 'info' | '' = '';
-  let isLoading = false;
-  let isValidating = false;
+  // Status state
+  let status = $state<StatusResponse | null>(null);
 
-  // Status tracking
-  let status: StatusResponse | null = null;
+  // Save feedback
+  let saveMessage = $state('');
 
   onMount(async () => {
     await Promise.all([loadConfig(), checkStatus()]);
@@ -46,7 +36,18 @@
       apiToken = config.api_token || '';
       secName = config.sec_user_agent_name || '';
       secEmail = config.sec_user_agent_email || '';
-    } catch (e) {
+
+      // If token is already set, trigger a validation
+      if (apiToken) {
+        tokenStatus = 'validating';
+        try {
+          const result = await invoke<{ success: boolean; message: string }>('validate_token', { apiToken });
+          tokenStatus = result.success ? 'valid' : 'invalid';
+        } catch {
+          tokenStatus = 'error';
+        }
+      }
+    } catch {
       // Config not found is ok on first run
     }
   }
@@ -59,470 +60,117 @@
     }
   }
 
-  async function saveConfig() {
-    isLoading = true;
+  // Auto-save with debounce
+  const debouncedSave = debounce(async () => {
     try {
       await invoke('save_config', {
         apiToken: apiToken || null,
         secUserAgentName: secName || null,
         secUserAgentEmail: secEmail || null,
       });
-      showStatus('Configuration saved successfully', 'success');
       await checkStatus();
+      showSaveMessage('Saved');
     } catch (e) {
-      showStatus(`Failed to save config: ${e}`, 'error');
-    } finally {
-      isLoading = false;
+      showSaveMessage(`Save failed: ${e}`);
     }
+  }, 800);
+
+  function handleConfigChange() {
+    debouncedSave();
   }
 
-  async function validateToken() {
-    if (!apiToken) {
-      showStatus('Please enter an API token first', 'error');
-      return;
-    }
-    isValidating = true;
-    try {
-      const result: ValidationResponse = await invoke('validate_token', { apiToken });
-      showStatus(result.message, result.success ? 'success' : 'error');
-    } catch (e) {
-      showStatus(`Validation failed: ${e}`, 'error');
-    } finally {
-      isValidating = false;
-    }
+  function showSaveMessage(msg: string) {
+    saveMessage = msg;
+    setTimeout(() => (saveMessage = ''), 2000);
   }
 
-  async function configureClaudeDesktop() {
-    isLoading = true;
-    try {
-      const result: ValidationResponse = await invoke('configure_claude_desktop');
-      showStatus(result.message, result.success ? 'success' : 'error');
-      await checkStatus();
-    } catch (e) {
-      showStatus(`Failed to configure Claude Desktop: ${e}`, 'error');
-    } finally {
-      isLoading = false;
-    }
+  function handleStatusChange() {
+    checkStatus();
   }
-
-  async function configureClaudeCode() {
-    isLoading = true;
-    try {
-      const result: ValidationResponse = await invoke('configure_claude_code');
-      showStatus(result.message, result.success ? 'success' : 'error');
-      await checkStatus();
-    } catch (e) {
-      showStatus(`Failed to configure Claude Code: ${e}`, 'error');
-    } finally {
-      isLoading = false;
-    }
-  }
-
-  function showStatus(message: string, type: 'success' | 'error' | 'info') {
-    statusMessage = message;
-    statusType = type;
-    setTimeout(() => {
-      statusMessage = '';
-      statusType = '';
-    }, 5000);
-  }
-
-  function openExternal(url: string) {
-    open(url);
-  }
-
-  // Computed: is everything configured?
-  $: allConfigured = (status?.claude_desktop_configured || status?.claude_code_configured) && status?.mcp_server_exists && status?.api_token_set && status?.sec_email_set;
 </script>
 
 <main>
   <div class="container">
-    <h1>FilingExplorer Settings</h1>
-    <p class="subtitle">Configure your FilingExplorer MCP server</p>
+    <header class="app-header">
+      <h1>FilingExplorer for Claude</h1>
+      <p class="subtitle">Connect Claude to SEC filings & financial data</p>
+    </header>
 
-    <!-- Status Panel -->
-    {#if status}
-      <section class="status-panel" class:all-good={allConfigured}>
-        <h2>{allConfigured ? 'Ready' : 'Setup Status'}</h2>
-        <div class="status-items">
-          <div class="status-item" class:ok={status.api_token_set} class:missing={!status.api_token_set}>
-            <span class="indicator">{status.api_token_set ? '✓' : '○'}</span>
-            <span>API Token</span>
-          </div>
-          <div class="status-item" class:ok={status.sec_email_set} class:missing={!status.sec_email_set}>
-            <span class="indicator">{status.sec_email_set ? '✓' : '○'}</span>
-            <span>SEC Email</span>
-          </div>
-          <div class="status-item" class:ok={status.claude_desktop_configured && status.mcp_server_exists} class:missing={!status.claude_desktop_configured || !status.mcp_server_exists}>
-            <span class="indicator">{status.claude_desktop_configured && status.mcp_server_exists ? '✓' : '○'}</span>
-            <span>Claude Desktop</span>
-          </div>
-          <div class="status-item" class:ok={status.claude_code_configured && status.mcp_server_exists} class:missing={!status.claude_code_configured || !status.mcp_server_exists}>
-            <span class="indicator">{status.claude_code_configured && status.mcp_server_exists ? '✓' : '○'}</span>
-            <span>Claude Code</span>
-          </div>
-        </div>
-        {#if (status.claude_desktop_configured || status.claude_code_configured) && !status.mcp_server_exists}
-          <p class="status-warning">MCP server binary not found at configured path</p>
-        {/if}
-      </section>
-    {/if}
+    <StatusPanel {status} {tokenStatus} />
 
-    <section class="section">
-      <h2>FilingExplorer API</h2>
-      <div class="form-group">
-        <label for="apiToken">API Token</label>
-        <div class="input-group">
-          <input
-            type="password"
-            id="apiToken"
-            bind:value={apiToken}
-            placeholder="Enter your API token..."
-          />
-          <button
-            class="secondary"
-            on:click={validateToken}
-            disabled={isValidating}
-          >
-            {isValidating ? 'Validating...' : 'Validate'}
-          </button>
-        </div>
-        <p class="help-text">
-          Get your API token from <button class="link-button" on:click={() => openExternal('https://www.filingexplorer.com/api-keys')}>filingexplorer.com/api-keys</button>
-        </p>
+    <TabBar bind:activeTab />
+
+    {#if activeTab === 'basic'}
+      <div class="tab-content">
+        <ApiTokenInput bind:apiToken bind:tokenStatus onsave={handleConfigChange} />
+        <SecConfigSection bind:secName bind:secEmail onsave={handleConfigChange} />
+        <BasicInstall {status} onstatuschange={handleStatusChange} />
       </div>
-    </section>
-
-    <section class="section">
-      <h2>SEC EDGAR Access</h2>
-      <p class="section-description">
-        Required for direct SEC document access. The SEC requires identification for their fair access policy.
-      </p>
-      <div class="form-group">
-        <label for="secName">Company/Name</label>
-        <input
-          type="text"
-          id="secName"
-          bind:value={secName}
-          placeholder="Your Company Name"
-        />
+    {:else if activeTab === 'advanced'}
+      <div class="tab-content">
+        <AdvancedConfigs onstatuschange={handleStatusChange} />
       </div>
-      <div class="form-group">
-        <label for="secEmail">Email Address</label>
-        <input
-          type="email"
-          id="secEmail"
-          bind:value={secEmail}
-          placeholder="your@email.com"
-        />
-        <p class="help-text">
-          Used in the User-Agent header when accessing SEC EDGAR
-        </p>
-      </div>
-    </section>
-
-    {#if statusMessage}
-      <div class="status {statusType}">
-        {statusMessage}
+    {:else if activeTab === 'tools'}
+      <div class="tab-content">
+        <ToolDocs />
       </div>
     {/if}
 
-    <div class="actions">
-      <button class="primary" on:click={saveConfig} disabled={isLoading}>
-        {isLoading ? 'Saving...' : 'Save Configuration'}
-      </button>
-    </div>
-
-    <section class="section claude-section">
-      <h2>Claude Integration</h2>
-      <p class="section-description">
-        Add FilingExplorer to Claude Desktop and/or Claude Code (CLI).
-      </p>
-      <div class="claude-buttons">
-        <button class="secondary" on:click={configureClaudeDesktop} disabled={isLoading}>
-          {status?.claude_desktop_configured ? 'Reconfigure Desktop' : 'Configure Desktop'}
-        </button>
-        <button class="secondary" on:click={configureClaudeCode} disabled={isLoading}>
-          {status?.claude_code_configured ? 'Reconfigure Code' : 'Configure Code'}
-        </button>
-      </div>
-      {#if status?.mcp_server_path}
-        <p class="path-display">
-          <span class="path-label">MCP Server:</span>
-          <code>{status.mcp_server_path}</code>
-        </p>
-      {/if}
-    </section>
+    {#if saveMessage}
+      <div class="save-indicator">{saveMessage}</div>
+    {/if}
   </div>
 </main>
 
 <style>
   .container {
-    max-width: 500px;
+    max-width: 520px;
     margin: 0 auto;
+    padding: 1.5em 1em;
     text-align: left;
   }
 
-  h1 {
-    font-size: 1.8em;
-    margin-bottom: 0.25em;
+  .app-header {
     text-align: center;
+    margin-bottom: 1.25em;
+  }
+
+  h1 {
+    font-size: 1.5em;
+    margin: 0 0 0.2em 0;
   }
 
   .subtitle {
     color: #888;
-    text-align: center;
-    margin-bottom: 1.5em;
-  }
-
-  h2 {
-    font-size: 1.1em;
-    margin-bottom: 0.75em;
-    color: #646cff;
-  }
-
-  /* Status Panel */
-  .status-panel {
-    padding: 1em 1.5em;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 12px;
-    margin-bottom: 1.5em;
-  }
-
-  .status-panel.all-good {
-    background: rgba(34, 197, 94, 0.1);
-    border-color: rgba(34, 197, 94, 0.3);
-  }
-
-  .status-panel h2 {
-    margin: 0 0 0.75em 0;
-    color: inherit;
-  }
-
-  .status-panel.all-good h2 {
-    color: #22c55e;
-  }
-
-  .status-items {
-    display: flex;
-    gap: 1.5em;
-    flex-wrap: wrap;
-  }
-
-  .status-item {
-    display: flex;
-    align-items: center;
-    gap: 0.4em;
-    font-size: 0.9em;
-  }
-
-  .status-item.ok {
-    color: #22c55e;
-  }
-
-  .status-item.missing {
-    color: #888;
-  }
-
-  .indicator {
-    font-weight: bold;
-  }
-
-  .status-warning {
-    margin-top: 0.75em;
-    margin-bottom: 0;
     font-size: 0.85em;
-    color: #ef4444;
+    margin: 0;
   }
 
-  .section {
-    margin-bottom: 1.5em;
-    padding: 1.5em;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
+  .tab-content {
+    min-height: 300px;
   }
 
-  .section-description {
-    font-size: 0.9em;
-    color: #888;
-    margin-bottom: 1em;
-  }
-
-  .form-group {
-    margin-bottom: 1em;
-  }
-
-  label {
-    display: block;
-    margin-bottom: 0.5em;
-    font-weight: 500;
-  }
-
-  input {
-    width: 100%;
-    padding: 0.75em;
-    border: 1px solid #444;
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.2);
-    color: inherit;
-    font-size: 1em;
-    box-sizing: border-box;
-  }
-
-  input:focus {
-    outline: none;
-    border-color: #646cff;
-  }
-
-  .input-group {
-    display: flex;
-    gap: 0.5em;
-  }
-
-  .input-group input {
-    flex: 1;
-  }
-
-  .input-group button {
-    flex-shrink: 0;
-  }
-
-  .help-text {
-    font-size: 0.85em;
-    color: #888;
-    margin-top: 0.5em;
-  }
-
-  .link-button {
-    background: none;
-    border: none;
-    color: #646cff;
-    cursor: pointer;
-    padding: 0;
-    font-size: inherit;
-    text-decoration: underline;
-  }
-
-  .link-button:hover {
-    color: #535bf2;
-  }
-
-  .actions {
-    margin-top: 1.5em;
-  }
-
-  button {
-    padding: 0.75em 1.5em;
-  }
-
-  button.primary {
-    width: 100%;
-    background: #646cff;
-    color: white;
-  }
-
-  button.primary:hover:not(:disabled) {
-    background: #535bf2;
-  }
-
-  button.secondary {
-    background: transparent;
-    border: 1px solid #646cff;
-    color: #646cff;
-  }
-
-  button.secondary:hover:not(:disabled) {
-    background: rgba(100, 108, 255, 0.1);
-  }
-
-  button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .full-width {
-    width: 100%;
-  }
-
-  .claude-section {
-    margin-top: 1.5em;
-    border-top: 1px solid #333;
-    padding-top: 1.5em;
-  }
-
-  .claude-buttons {
-    display: flex;
-    gap: 0.75em;
-  }
-
-  .claude-buttons button {
-    flex: 1;
-  }
-
-  .path-display {
-    margin-top: 1em;
-    margin-bottom: 0;
-    font-size: 0.8em;
-    color: #888;
-    word-break: break-all;
-  }
-
-  .path-label {
-    display: block;
-    margin-bottom: 0.25em;
-  }
-
-  .path-display code {
-    color: #aaa;
-    background: rgba(0,0,0,0.2);
-    padding: 0.2em 0.4em;
-    border-radius: 4px;
-    font-size: 0.9em;
-  }
-
-  .status {
-    padding: 1em;
-    border-radius: 8px;
-    margin: 1em 0;
-    font-size: 0.9em;
-  }
-
-  .status.success {
-    background: rgba(34, 197, 94, 0.2);
-    border: 1px solid #22c55e;
+  .save-indicator {
+    position: fixed;
+    bottom: 1em;
+    right: 1em;
+    padding: 0.4em 0.8em;
+    background: rgba(34, 197, 94, 0.15);
     color: #22c55e;
+    border-radius: 6px;
+    font-size: 0.75em;
+    pointer-events: none;
+    animation: fadeIn 0.15s ease;
   }
 
-  .status.error {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid #ef4444;
-    color: #ef4444;
-  }
-
-  .status.info {
-    background: rgba(100, 108, 255, 0.2);
-    border: 1px solid #646cff;
-    color: #646cff;
-  }
-
-  @media (prefers-color-scheme: light) {
-    .section {
-      background: rgba(0, 0, 0, 0.03);
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
     }
-
-    input {
-      background: white;
-      border-color: #ddd;
-    }
-
-    .claude-section {
-      border-top-color: #eee;
-    }
-
-    .path-display code {
-      background: rgba(0,0,0,0.05);
-      color: #666;
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 </style>

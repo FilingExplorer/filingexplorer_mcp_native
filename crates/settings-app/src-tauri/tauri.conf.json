@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "FilingExplorer Settings",
-  "version": "0.1.0",
+  "productName": "FilingExplorer for Claude",
+  "version": "0.2.0",
   "identifier": "com.filingexplorer.settings",
   "build": {
     "frontendDist": "../ui/dist",
@@ -12,9 +12,9 @@
   "app": {
     "windows": [
       {
-        "title": "FilingExplorer Settings",
+        "title": "FilingExplorer for Claude",
         "width": 580,
-        "height": 700,
+        "height": 800,
         "resizable": true,
         "fullscreen": false,
         "center": true

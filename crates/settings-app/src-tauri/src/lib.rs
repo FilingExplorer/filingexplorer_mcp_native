@@ -3,6 +3,7 @@
 //! Tauri commands for managing configuration.
 
 use filing_explorer_core::config::Config;
+use filing_explorer_core::tools::registry::{self, DetailLevel};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
@@ -32,6 +33,35 @@ pub struct StatusResponse {
     pub mcp_server_exists: bool,
     pub api_token_set: bool,
     pub sec_email_set: bool,
+}
+
+/// Info about a single Claude config location
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ClaudeConfigInfo {
+    pub config_type: String,
+    pub label: String,
+    pub path: String,
+    pub exists: bool,
+    pub mcp_installed: bool,
+    pub mcp_server_path: Option<String>,
+    pub mcp_server_valid: bool,
+}
+
+/// Tool category info for the UI
+#[derive(Serialize, Deserialize)]
+pub struct ToolCategoryInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub tool_count: u64,
+    pub tools: Vec<ToolInfo>,
+}
+
+/// Individual tool info for the UI
+#[derive(Serialize, Deserialize)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
 }
 
 /// Load the current configuration
@@ -65,7 +95,7 @@ async fn validate_token(api_token: String) -> Result<ValidationResponse, String>
     let client = reqwest::Client::new();
 
     let response = client
-        .get("https://api.filingexplorer.com/v1/watchlists")
+        .get("https://api.filingexplorer.com/v1/lists")
         .header("Authorization", format!("Bearer {}", api_token))
         .header("Accept", "application/json")
         .send()
@@ -96,72 +126,235 @@ async fn check_status() -> Result<StatusResponse, String> {
     // Check config
     let config = Config::load().unwrap_or_default();
     let api_token_set = config.api_token.as_ref().map_or(false, |t| !t.is_empty());
-    let sec_email_set = config.sec_user_agent_email.as_ref().map_or(false, |e| !e.is_empty());
+    let sec_email_set = config
+        .sec_user_agent_email
+        .as_ref()
+        .map_or(false, |e| !e.is_empty());
 
     // Check Claude Desktop config
     let claude_desktop_config_path = get_claude_desktop_config_path();
-    let (claude_desktop_configured, mcp_server_path, mcp_server_exists) = if let Some(ref path) = claude_desktop_config_path {
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(cmd) = config
-                        .get("mcpServers")
-                        .and_then(|s| s.get("filing-explorer"))
-                        .and_then(|s| s.get("command"))
-                        .and_then(|c| c.as_str())
-                    {
-                        let path = std::path::PathBuf::from(cmd);
-                        let exists = path.exists();
-                        (true, Some(cmd.to_string()), exists)
-                    } else {
-                        (false, None, false)
-                    }
-                } else {
-                    (false, None, false)
-                }
-            } else {
-                (false, None, false)
-            }
+    let (claude_desktop_configured, mcp_server_path, mcp_server_exists) =
+        if let Some(ref path) = claude_desktop_config_path {
+            check_mcp_in_config(path)
         } else {
             (false, None, false)
-        }
-    } else {
-        (false, None, false)
-    };
+        };
 
     // Check Claude Code config
     let claude_code_config_path = get_claude_code_config_path();
     let claude_code_configured = if let Some(ref path) = claude_code_config_path {
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
-                    config
-                        .get("mcpServers")
-                        .and_then(|s| s.get("filing-explorer"))
-                        .is_some()
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        }
+        check_mcp_in_config(path).0
     } else {
         false
     };
 
     Ok(StatusResponse {
         claude_desktop_configured,
-        claude_desktop_config_path: claude_desktop_config_path.map(|p| p.to_string_lossy().to_string()),
+        claude_desktop_config_path: claude_desktop_config_path
+            .map(|p| p.to_string_lossy().to_string()),
         claude_code_configured,
-        claude_code_config_path: claude_code_config_path.map(|p| p.to_string_lossy().to_string()),
+        claude_code_config_path: claude_code_config_path
+            .map(|p| p.to_string_lossy().to_string()),
         mcp_server_path,
         mcp_server_exists,
         api_token_set,
         sec_email_set,
     })
+}
+
+/// Get all Claude config locations with their current status
+#[tauri::command]
+async fn get_all_claude_configs() -> Result<Vec<ClaudeConfigInfo>, String> {
+    let mcp_server_path = find_mcp_server_path().ok();
+    let mcp_server_valid = mcp_server_path
+        .as_ref()
+        .map_or(false, |p| p.exists());
+
+    let mut configs = Vec::new();
+
+    // Claude Desktop
+    if let Some(path) = get_claude_desktop_config_path() {
+        let path_str = path.to_string_lossy().to_string();
+        let exists = path.exists();
+        let (mcp_installed, server_path, _) = if exists {
+            check_mcp_in_config(&path)
+        } else {
+            (false, None, false)
+        };
+
+        configs.push(ClaudeConfigInfo {
+            config_type: "desktop".to_string(),
+            label: "Claude Desktop".to_string(),
+            path: path_str,
+            exists,
+            mcp_installed,
+            mcp_server_path: server_path.or_else(|| {
+                mcp_server_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+            }),
+            mcp_server_valid,
+        });
+    }
+
+    // Claude Code (global)
+    if let Some(path) = get_claude_code_config_path() {
+        let path_str = path.to_string_lossy().to_string();
+        let exists = path.exists();
+        let (mcp_installed, server_path, _) = if exists {
+            check_mcp_in_config(&path)
+        } else {
+            (false, None, false)
+        };
+
+        configs.push(ClaudeConfigInfo {
+            config_type: "code_global".to_string(),
+            label: "Claude Code (Global)".to_string(),
+            path: path_str,
+            exists,
+            mcp_installed,
+            mcp_server_path: server_path.or_else(|| {
+                mcp_server_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+            }),
+            mcp_server_valid,
+        });
+    }
+
+    Ok(configs)
+}
+
+/// Install MCP server config to a specific Claude config file
+#[tauri::command]
+async fn install_mcp_to_config(
+    config_type: String,
+) -> Result<ValidationResponse, String> {
+    match config_type.as_str() {
+        "desktop" => configure_claude_desktop().await,
+        "code_global" => configure_claude_code().await,
+        _ => Err(format!("Unknown config type: {}", config_type)),
+    }
+}
+
+/// Get the MCP config JSON snippet for manual installation / clipboard
+#[tauri::command]
+async fn get_mcp_config_snippet(config_type: String) -> Result<String, String> {
+    let mcp_server_path = find_mcp_server_path()?;
+    let path_str = mcp_server_path.to_string_lossy().to_string();
+
+    let snippet = match config_type.as_str() {
+        "desktop" => {
+            serde_json::to_string_pretty(&serde_json::json!({
+                "filing-explorer": {
+                    "command": path_str,
+                    "args": []
+                }
+            }))
+            .map_err(|e| e.to_string())?
+        }
+        "code_global" => {
+            serde_json::to_string_pretty(&serde_json::json!({
+                "filing-explorer": {
+                    "type": "stdio",
+                    "command": path_str,
+                    "args": []
+                }
+            }))
+            .map_err(|e| e.to_string())?
+        }
+        _ => return Err(format!("Unknown config type: {}", config_type)),
+    };
+
+    Ok(snippet)
+}
+
+/// Get tool categories with their tools for the documentation tab
+#[tauri::command]
+async fn get_tool_categories() -> Result<Vec<ToolCategoryInfo>, String> {
+    let categories_json = registry::get_categories(DetailLevel::WithDescriptions);
+
+    let cats = categories_json["categories"]
+        .as_array()
+        .ok_or("Failed to parse categories")?;
+
+    let mut result = Vec::new();
+
+    for cat in cats {
+        let id = cat["id"].as_str().unwrap_or("").to_string();
+        let name = cat["name"].as_str().unwrap_or("").to_string();
+        let description = cat
+            .get("description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("")
+            .to_string();
+        let tool_count = cat["tool_count"].as_u64().unwrap_or(0);
+
+        // Get tools for this category
+        let tools_json = registry::list_tools_by_category(&id, DetailLevel::WithDescriptions);
+        let tools_arr = tools_json["tools"].as_array();
+
+        let tools = tools_arr
+            .map(|arr| {
+                arr.iter()
+                    .map(|t| ToolInfo {
+                        name: t["name"].as_str().unwrap_or("").to_string(),
+                        description: t
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        result.push(ToolCategoryInfo {
+            id,
+            name,
+            description,
+            tool_count,
+            tools,
+        });
+    }
+
+    Ok(result)
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+/// Check if a config file has MCP server configured, return (installed, server_path, server_exists)
+fn check_mcp_in_config(
+    path: &std::path::Path,
+) -> (bool, Option<String>, bool) {
+    if !path.exists() {
+        return (false, None, false);
+    }
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return (false, None, false),
+    };
+
+    let config: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(c) => c,
+        Err(_) => return (false, None, false),
+    };
+
+    if let Some(cmd) = config
+        .get("mcpServers")
+        .and_then(|s| s.get("filing-explorer"))
+        .and_then(|s| s.get("command"))
+        .and_then(|c| c.as_str())
+    {
+        let path = std::path::PathBuf::from(cmd);
+        let exists = path.exists();
+        (true, Some(cmd.to_string()), exists)
+    } else {
+        (false, None, false)
+    }
 }
 
 /// Get the path to Claude Desktop config file
@@ -183,6 +376,7 @@ fn get_claude_desktop_config_path() -> Option<std::path::PathBuf> {
 }
 
 /// Get the path to Claude Code config file (~/.claude.json)
+/// See: https://code.claude.com/docs/en/mcp#mcp-installation-scopes
 fn get_claude_code_config_path() -> Option<std::path::PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude.json"))
 }
@@ -298,6 +492,7 @@ async fn configure_claude_desktop() -> Result<ValidationResponse, String> {
 }
 
 /// Configure Claude Code to use the MCP server
+/// Writes to ~/.claude.json per https://code.claude.com/docs/en/mcp#mcp-installation-scopes
 #[tauri::command]
 async fn configure_claude_code() -> Result<ValidationResponse, String> {
     let config_path = get_claude_code_config_path()
@@ -338,18 +533,47 @@ async fn configure_claude_code() -> Result<ValidationResponse, String> {
     })
 }
 
+/// Configure both Claude Desktop and Claude Code at once
+#[tauri::command]
+async fn configure_both() -> Result<ValidationResponse, String> {
+    let desktop_result = configure_claude_desktop().await;
+    let code_result = configure_claude_code().await;
+
+    match (desktop_result, code_result) {
+        (Ok(_), Ok(_)) => Ok(ValidationResponse {
+            success: true,
+            message: "Both Claude Desktop and Claude Code configured. Restart Claude Desktop and start new Claude Code sessions to apply changes.".to_string(),
+        }),
+        (Err(e1), Err(e2)) => Err(format!("Both configurations failed:\nDesktop: {}\nCode: {}", e1, e2)),
+        (Err(e), Ok(_)) => Ok(ValidationResponse {
+            success: true,
+            message: format!("Claude Code configured, but Claude Desktop failed: {}", e),
+        }),
+        (Ok(_), Err(e)) => Ok(ValidationResponse {
+            success: true,
+            message: format!("Claude Desktop configured, but Claude Code failed: {}", e),
+        }),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             load_config,
             save_config,
             validate_token,
             configure_claude_desktop,
             configure_claude_code,
+            configure_both,
             check_status,
+            get_all_claude_configs,
+            install_mcp_to_config,
+            get_mcp_config_snippet,
+            get_tool_categories,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

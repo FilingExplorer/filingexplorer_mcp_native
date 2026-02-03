@@ -1,6 +1,6 @@
 [package]
 name = "filing-explorer-settings"
-version = "0.1.0"
+version = "0.2.0"
 description = "FilingExplorer Settings - Configure API token and SEC email"
 authors = ["Giant Octopus, LLC <hello@giantoctopus.ink>"]
 license = "MIT"
@@ -37,5 +37,6 @@ dirs = "5.0"
 
 # Tauri
 tauri = { version = "2.9.5", features = ["devtools"] }
+tauri-plugin-clipboard-manager = "2"
 tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
