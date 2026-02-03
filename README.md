@@ -1,6 +1,6 @@
-# FilingExplorer MCP
+# FilingExplorer for Claude
 
-A native [Model Context Protocol](https://modelcontextprotocol.io/) server that gives [Claude Desktop](https://claude.ai/download) access to SEC filings, company financials, institutional holdings, and more through the [FilingExplorer API](https://www.filingexplorer.com).
+A native [Model Context Protocol](https://modelcontextprotocol.io/) server that gives [Claude Desktop](https://claude.ai/download) and [Claude Code](https://claude.ai/code) access to SEC filings, company financials, institutional holdings, and more through the [FilingExplorer API](https://www.filingexplorer.com).
 
 ## Features
 
@@ -18,11 +18,11 @@ A native [Model Context Protocol](https://modelcontextprotocol.io/) server that 
 ### macOS
 
 1. Download the latest `.dmg` from [Releases](https://github.com/FilingExplorer/filingexplorer_mcp_native/releases)
-2. Open the DMG and drag **FilingExplorer Settings** to Applications
+2. Open the DMG and drag **FilingExplorer for Claude** to Applications
 3. Open the app and enter your [FilingExplorer API token](https://www.filingexplorer.com/api-keys)
 4. To use the tools that fetch documents directly from the SEC, enter your email you@your-company-domain.com -- (Email address with private domain required by SEC for EDGAR access).
-5. Click **Configure Claude Desktop**
-6. Restart Claude Desktop
+5. Click **Install FilingExplorer MCP** (configures both Claude Desktop and Claude Code)
+6. Restart Claude Desktop (Claude Code picks up the change automatically in new sessions)
 
 ### Manual Setup
 
@@ -48,7 +48,21 @@ EOF
 {
   "mcpServers": {
     "filing-explorer": {
-      "command": "/Applications/FilingExplorer Settings.app/Contents/MacOS/mcp-server",
+      "command": "/Applications/FilingExplorer for Claude.app/Contents/MacOS/mcp-server",
+      "args": []
+    }
+  }
+}
+```
+
+**2b. (Optional) Add to Claude Code config** (`~/.claude.json`):
+
+```json
+{
+  "mcpServers": {
+    "filing-explorer": {
+      "type": "stdio",
+      "command": "/Applications/FilingExplorer for Claude.app/Contents/MacOS/mcp-server",
       "args": []
     }
   }
@@ -77,7 +91,7 @@ Requires Rust 1.75+ and Node.js 18+.
 ./build-macos-universal.sh
 ```
 
-The app will be at `target/universal-apple-darwin/release/bundle/macos/FilingExplorer Settings.app`
+The app will be at `target/universal-apple-darwin/release/bundle/macos/FilingExplorer for Claude.app`
 
 ## License
 
