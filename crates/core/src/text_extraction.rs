@@ -229,6 +229,162 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_html_removes_style() {
+        let html = r#"
+            <html>
+            <head>
+                <style>body { color: red; }</style>
+            </head>
+            <body>
+                <style>.hidden { display: none; }</style>
+                <p>Visible content</p>
+            </body>
+            </html>
+        "#;
+
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.contains("Visible content"));
+        assert!(!result.contains("color: red"));
+        assert!(!result.contains("display: none"));
+    }
+
+    #[test]
+    fn test_extract_html_removes_noscript() {
+        let html = r#"
+            <html>
+            <body>
+                <noscript>Please enable JavaScript</noscript>
+                <p>Main content</p>
+            </body>
+            </html>
+        "#;
+
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.contains("Main content"));
+        assert!(!result.contains("Please enable JavaScript"));
+    }
+
+    #[test]
+    fn test_extract_html_removes_form_elements() {
+        let html = r#"
+            <html>
+            <body>
+                <form>
+                    <input type="text" value="input value">
+                    <button>Submit</button>
+                    <select><option>Option 1</option></select>
+                    <textarea>Text area content</textarea>
+                </form>
+                <p>Regular paragraph</p>
+            </body>
+            </html>
+        "#;
+
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.contains("Regular paragraph"));
+        // Form elements and their content should be removed
+        assert!(!result.contains("Submit"));
+    }
+
+    #[test]
+    fn test_extract_html_with_table() {
+        let html = r#"
+            <html>
+            <body>
+                <table>
+                    <tr><th>Name</th><th>Value</th></tr>
+                    <tr><td>Item 1</td><td>100</td></tr>
+                    <tr><td>Item 2</td><td>200</td></tr>
+                </table>
+            </body>
+            </html>
+        "#;
+
+        let result = extract_text_from_html(html).unwrap();
+        // Tables should be formatted with pipe delimiters
+        assert!(result.contains("Name"));
+        assert!(result.contains("Value"));
+        assert!(result.contains("Item 1"));
+        assert!(result.contains("100"));
+    }
+
+    #[test]
+    fn test_extract_html_preserves_headers() {
+        let html = r#"
+            <html>
+            <body>
+                <h1>Main Title</h1>
+                <h2>Section Header</h2>
+                <p>Paragraph content</p>
+            </body>
+            </html>
+        "#;
+
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.contains("Main Title"));
+        assert!(result.contains("Section Header"));
+        assert!(result.contains("Paragraph content"));
+    }
+
+    #[test]
+    fn test_extract_html_nested_elements() {
+        let html = r#"
+            <html>
+            <body>
+                <div>
+                    <div>
+                        <div>
+                            <p>Deeply nested content</p>
+                        </div>
+                    </div>
+                </div>
+            </body>
+            </html>
+        "#;
+
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.contains("Deeply nested content"));
+    }
+
+    #[test]
+    fn test_extract_html_empty() {
+        let html = "<html><body></body></html>";
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_html_only_whitespace() {
+        let html = "<html><body>   \n\n\t   </body></html>";
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_html_special_chars() {
+        let html = "<html><body><p>&amp; &lt; &gt; &quot;</p></body></html>";
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.contains("&"));
+        assert!(result.contains("<"));
+        assert!(result.contains(">"));
+    }
+
+    #[test]
+    fn test_extract_xml() {
+        let xml = r#"
+            <?xml version="1.0"?>
+            <root>
+                <item>First item</item>
+                <item>Second item</item>
+            </root>
+        "#;
+
+        let result = extract_text_from_xml(xml).unwrap();
+        assert!(result.contains("First item"));
+        assert!(result.contains("Second item"));
+    }
+
+    #[test]
     fn test_normalize_whitespace() {
         let text = "Hello   world\n\n\ntest";
         let result = normalize_whitespace(text);
@@ -236,9 +392,93 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_whitespace_empty() {
+        let result = normalize_whitespace("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_normalize_whitespace_only_spaces() {
+        let result = normalize_whitespace("     ");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_normalize_whitespace_only_newlines() {
+        let result = normalize_whitespace("\n\n\n");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_normalize_whitespace_mixed() {
+        // Note: The normalize function keeps a space before the newline
+        // because it processes character by character
+        let text = "  Hello  \n\n  world  \n test  ";
+        let result = normalize_whitespace(text);
+        // Check that multiple spaces and newlines are collapsed
+        assert!(result.contains("Hello"));
+        assert!(result.contains("world"));
+        assert!(result.contains("test"));
+        // No double newlines
+        assert!(!result.contains("\n\n"));
+    }
+
+    #[test]
+    fn test_normalize_whitespace_tabs() {
+        let text = "Hello\t\tworld";
+        let result = normalize_whitespace(text);
+        assert_eq!(result, "Hello world");
+    }
+
+    #[test]
     fn test_is_pdf() {
         assert!(is_pdf(b"%PDF-1.4"));
+        assert!(is_pdf(b"%PDF-1.7"));
+        assert!(is_pdf(b"%PDF-2.0"));
         assert!(!is_pdf(b"<html>"));
+        assert!(!is_pdf(b"not a pdf"));
+        assert!(!is_pdf(b""));
+        assert!(!is_pdf(b"PDF")); // Missing %
+    }
+
+    #[test]
+    fn test_is_html_or_xml_doctype() {
+        assert!(is_html_or_xml(b"<!DOCTYPE html>"));
+        assert!(is_html_or_xml(b"  <!DOCTYPE html>")); // Leading whitespace
+        assert!(is_html_or_xml(b"\n<!DOCTYPE html>")); // Leading newline
+    }
+
+    #[test]
+    fn test_is_html_or_xml_html_tag() {
+        assert!(is_html_or_xml(b"<html>"));
+        assert!(is_html_or_xml(b"<HTML>"));
+        assert!(is_html_or_xml(b"<html lang=\"en\">"));
+    }
+
+    #[test]
+    fn test_is_html_or_xml_xml_declaration() {
+        assert!(is_html_or_xml(b"<?xml version=\"1.0\"?>"));
+        assert!(is_html_or_xml(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+    }
+
+    #[test]
+    fn test_is_html_or_xml_xml_tag() {
+        assert!(is_html_or_xml(b"<XML>"));
+    }
+
+    #[test]
+    fn test_is_html_or_xml_not_html() {
+        assert!(!is_html_or_xml(b"plain text"));
+        assert!(!is_html_or_xml(b"%PDF-1.4"));
+        assert!(!is_html_or_xml(b""));
+        assert!(!is_html_or_xml(b"<div>not starting with html"));
+    }
+
+    #[test]
+    fn test_is_html_or_xml_invalid_utf8() {
+        // Invalid UTF-8 bytes
+        let invalid_bytes = vec![0xff, 0xfe];
+        assert!(!is_html_or_xml(&invalid_bytes));
     }
 
     #[test]
@@ -247,5 +487,101 @@ mod tests {
         let result = truncate_for_llm(text, 30);
         assert!(result.starts_with("First sentence."));
         assert!(result.contains("[Content truncated"));
+    }
+
+    #[test]
+    fn test_truncate_short_text() {
+        let text = "Short text.";
+        let result = truncate_for_llm(text, 100);
+        assert_eq!(result, "Short text.");
+        assert!(!result.contains("[Content truncated"));
+    }
+
+    #[test]
+    fn test_truncate_exact_length() {
+        let text = "Exactly 10";
+        let result = truncate_for_llm(text, 10);
+        assert_eq!(result, "Exactly 10");
+    }
+
+    #[test]
+    fn test_truncate_no_sentence_break() {
+        let text = "This is a long text without any sentence breaks that needs truncation";
+        let result = truncate_for_llm(text, 20);
+        assert!(result.contains("[Content truncated"));
+    }
+
+    #[test]
+    fn test_truncate_newline_sentence_break() {
+        let text = "First sentence.\nSecond sentence.\nThird sentence.";
+        let result = truncate_for_llm(text, 25);
+        assert!(result.starts_with("First sentence."));
+        assert!(result.contains("[Content truncated"));
+    }
+
+    #[test]
+    fn test_extraction_error_display() {
+        let err = ExtractionError::HtmlParseError("test error".to_string());
+        assert_eq!(format!("{}", err), "Failed to parse HTML: test error");
+
+        let err = ExtractionError::PdfError("pdf error".to_string());
+        assert_eq!(format!("{}", err), "Failed to extract PDF text: pdf error");
+
+        let err = ExtractionError::UnsupportedType;
+        assert_eq!(format!("{}", err), "Unsupported content type");
+    }
+
+    #[test]
+    fn test_extract_html_list_items() {
+        let html = r#"
+            <html>
+            <body>
+                <ul>
+                    <li>Item one</li>
+                    <li>Item two</li>
+                    <li>Item three</li>
+                </ul>
+            </body>
+            </html>
+        "#;
+
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.contains("Item one"));
+        assert!(result.contains("Item two"));
+        assert!(result.contains("Item three"));
+    }
+
+    #[test]
+    fn test_extract_html_removes_nav_footer() {
+        let html = r#"
+            <html>
+            <body>
+                <nav>Navigation menu</nav>
+                <main>Main content</main>
+                <footer>Footer content</footer>
+            </body>
+            </html>
+        "#;
+
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.contains("Main content"));
+        assert!(!result.contains("Navigation menu"));
+        assert!(!result.contains("Footer content"));
+    }
+
+    #[test]
+    fn test_extract_html_removes_iframe() {
+        let html = r#"
+            <html>
+            <body>
+                <iframe>Iframe content</iframe>
+                <p>Regular content</p>
+            </body>
+            </html>
+        "#;
+
+        let result = extract_text_from_html(html).unwrap();
+        assert!(result.contains("Regular content"));
+        assert!(!result.contains("Iframe content"));
     }
 }

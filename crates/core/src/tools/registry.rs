@@ -1057,12 +1057,139 @@ pub fn get_tool_schema(name: &str) -> Option<Value> {
 mod tests {
     use super::*;
 
+    // ==========================================================================
+    // Category Tests
+    // ==========================================================================
+
     #[test]
     fn test_get_categories() {
         let result = get_categories(DetailLevel::Summary);
         assert_eq!(result["total_categories"], 12);
         assert!(result["total_tools"].as_u64().unwrap() > 0);
     }
+
+    #[test]
+    fn test_get_categories_summary() {
+        let result = get_categories(DetailLevel::Summary);
+        let cats = result["categories"].as_array().unwrap();
+
+        // Summary should not include tools list
+        for cat in cats {
+            assert!(cat.get("tools").is_none());
+            assert!(cat.get("description").is_none());
+        }
+    }
+
+    #[test]
+    fn test_get_categories_with_tool_names() {
+        let result = get_categories(DetailLevel::WithToolNames);
+        let cats = result["categories"].as_array().unwrap();
+
+        // Should include tools list
+        for cat in cats {
+            assert!(cat.get("tools").is_some());
+            // But not description at this level
+            assert!(cat.get("description").is_none());
+        }
+    }
+
+    #[test]
+    fn test_get_categories_with_descriptions() {
+        let result = get_categories(DetailLevel::WithDescriptions);
+        let cats = result["categories"].as_array().unwrap();
+
+        // Should include tools list and description
+        for cat in cats {
+            assert!(cat.get("tools").is_some());
+            assert!(cat.get("description").is_some());
+            assert!(cat.get("example_queries").is_some());
+        }
+    }
+
+    #[test]
+    fn test_category_all() {
+        let all_cats = Category::all();
+        assert_eq!(all_cats.len(), 12);
+    }
+
+    #[test]
+    fn test_category_as_str() {
+        assert_eq!(Category::CompanyData.as_str(), "company_data");
+        assert_eq!(Category::SecDocuments.as_str(), "sec_documents");
+        assert_eq!(Category::InstitutionalFilings.as_str(), "institutional_filings");
+        assert_eq!(Category::EtfData.as_str(), "etf_data");
+        assert_eq!(Category::FormAdvFirms.as_str(), "form_adv_firms");
+        assert_eq!(Category::Watchlists.as_str(), "watchlists");
+        assert_eq!(Category::WatchlistItems.as_str(), "watchlist_items");
+        assert_eq!(Category::Lobbying.as_str(), "lobbying");
+    }
+
+    #[test]
+    fn test_category_from_str() {
+        assert_eq!(
+            "company_data".parse::<Category>().unwrap(),
+            Category::CompanyData
+        );
+        assert_eq!(
+            "sec_documents".parse::<Category>().unwrap(),
+            Category::SecDocuments
+        );
+        assert_eq!(
+            "watchlists".parse::<Category>().unwrap(),
+            Category::Watchlists
+        );
+    }
+
+    #[test]
+    fn test_category_from_str_invalid() {
+        let result = "invalid_category".parse::<Category>();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown category"));
+    }
+
+    // ==========================================================================
+    // Detail Level Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_detail_level_default() {
+        assert_eq!(DetailLevel::default(), DetailLevel::WithDescriptions);
+    }
+
+    #[test]
+    fn test_detail_level_from_str() {
+        assert_eq!(
+            "summary".parse::<DetailLevel>().unwrap(),
+            DetailLevel::Summary
+        );
+        assert_eq!(
+            "with_tool_names".parse::<DetailLevel>().unwrap(),
+            DetailLevel::WithToolNames
+        );
+        assert_eq!(
+            "with_descriptions".parse::<DetailLevel>().unwrap(),
+            DetailLevel::WithDescriptions
+        );
+        assert_eq!(
+            "names_only".parse::<DetailLevel>().unwrap(),
+            DetailLevel::NamesOnly
+        );
+        assert_eq!(
+            "full_schema".parse::<DetailLevel>().unwrap(),
+            DetailLevel::FullSchema
+        );
+    }
+
+    #[test]
+    fn test_detail_level_from_str_invalid() {
+        let result = "invalid_level".parse::<DetailLevel>();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown detail level"));
+    }
+
+    // ==========================================================================
+    // Search Tests
+    // ==========================================================================
 
     #[test]
     fn test_search_tools() {
@@ -1074,7 +1201,111 @@ mod tests {
     fn test_search_tools_short_query() {
         let result = search_tools("a", None, DetailLevel::NamesOnly);
         assert!(result["error"].is_string());
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .contains("at least 2 characters"));
     }
+
+    #[test]
+    fn test_search_tools_empty_query() {
+        let result = search_tools("", None, DetailLevel::NamesOnly);
+        assert!(result["error"].is_string());
+    }
+
+    #[test]
+    fn test_search_tools_with_category_filter() {
+        let result = search_tools("holdings", Some("etf_data"), DetailLevel::NamesOnly);
+        assert!(result["match_count"].as_u64().unwrap() > 0);
+
+        // All results should be from etf_data category
+        let matches = result["matches"].as_array().unwrap();
+        for m in matches {
+            assert_eq!(m["category"], "etf_data");
+        }
+    }
+
+    #[test]
+    fn test_search_tools_invalid_category() {
+        let result = search_tools("test", Some("invalid_cat"), DetailLevel::NamesOnly);
+        assert!(result["error"].is_string());
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .contains("Unknown category"));
+    }
+
+    #[test]
+    fn test_search_tools_no_matches() {
+        let result = search_tools("zzzznonexistent", None, DetailLevel::NamesOnly);
+        assert_eq!(result["match_count"], 0);
+        assert!(result["matches"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_search_tools_relevance_sorting() {
+        let result = search_tools("watchlist", None, DetailLevel::NamesOnly);
+        let matches = result["matches"].as_array().unwrap();
+
+        // Should have multiple matches
+        assert!(matches.len() > 1);
+
+        // Should be sorted by relevance (descending)
+        let mut prev_score = f64::MAX;
+        for m in matches {
+            let score = m["relevance_score"].as_f64().unwrap();
+            assert!(score <= prev_score);
+            prev_score = score;
+        }
+    }
+
+    #[test]
+    fn test_search_tools_names_only_detail() {
+        let result = search_tools("financials", None, DetailLevel::NamesOnly);
+        let matches = result["matches"].as_array().unwrap();
+
+        for m in matches {
+            assert!(m.get("name").is_some());
+            assert!(m.get("category").is_some());
+            // Should not have description at NamesOnly level
+            assert!(m.get("description").is_none());
+            assert!(m.get("input_schema").is_none());
+        }
+    }
+
+    #[test]
+    fn test_search_tools_full_schema_detail() {
+        let result = search_tools("financials", None, DetailLevel::FullSchema);
+        let matches = result["matches"].as_array().unwrap();
+
+        // At least one match should have full schema
+        let first = &matches[0];
+        assert!(first.get("description").is_some());
+        assert!(first.get("keywords").is_some());
+        assert!(first.get("input_schema").is_some());
+    }
+
+    #[test]
+    fn test_search_by_keyword() {
+        // Search by a keyword rather than tool name
+        let result = search_tools("10-K", None, DetailLevel::NamesOnly);
+        assert!(result["match_count"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let result_lower = search_tools("etf", None, DetailLevel::NamesOnly);
+        let result_upper = search_tools("ETF", None, DetailLevel::NamesOnly);
+
+        assert_eq!(
+            result_lower["match_count"].as_u64().unwrap(),
+            result_upper["match_count"].as_u64().unwrap()
+        );
+    }
+
+    // ==========================================================================
+    // Tool Metadata Tests
+    // ==========================================================================
 
     #[test]
     fn test_get_tool_metadata() {
@@ -1087,5 +1318,171 @@ mod tests {
     fn test_unknown_tool() {
         let result = get_tool_metadata("nonexistent_tool", DetailLevel::FullSchema);
         assert!(result["error"].is_string());
+    }
+
+    #[test]
+    fn test_get_tool_metadata_names_only() {
+        let result = get_tool_metadata("get_company_financials", DetailLevel::NamesOnly);
+        assert_eq!(result["name"], "get_company_financials");
+        assert!(result.get("description").is_none());
+        assert!(result.get("inputSchema").is_none());
+    }
+
+    #[test]
+    fn test_get_tool_metadata_with_descriptions() {
+        let result = get_tool_metadata("get_company_financials", DetailLevel::WithDescriptions);
+        assert_eq!(result["name"], "get_company_financials");
+        assert!(result.get("description").is_some());
+        assert!(result.get("keywords").is_some());
+        assert!(result.get("inputSchema").is_none()); // Not at this level
+    }
+
+    // ==========================================================================
+    // List Tools by Category Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_list_tools_by_category() {
+        let result = list_tools_by_category("company_data", DetailLevel::NamesOnly);
+        assert!(result["tool_count"].as_u64().unwrap() > 0);
+        assert_eq!(result["category"], "company_data");
+        assert!(result.get("tools").is_some());
+    }
+
+    #[test]
+    fn test_list_tools_by_category_invalid() {
+        let result = list_tools_by_category("invalid_category", DetailLevel::NamesOnly);
+        assert!(result["error"].is_string());
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .contains("Unknown category"));
+    }
+
+    #[test]
+    fn test_list_tools_by_category_with_full_schema() {
+        let result = list_tools_by_category("etf_data", DetailLevel::FullSchema);
+        let tools = result["tools"].as_array().unwrap();
+
+        // ETF data category has tools
+        assert!(!tools.is_empty());
+
+        // Each tool should have inputSchema at FullSchema level
+        for tool in tools {
+            assert!(tool.get("inputSchema").is_some());
+        }
+    }
+
+    // ==========================================================================
+    // Utility Function Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_tool_exists() {
+        assert!(tool_exists("get_company_financials"));
+        assert!(tool_exists("get_lists"));
+        assert!(!tool_exists("nonexistent_tool"));
+    }
+
+    #[test]
+    fn test_get_tool_schema() {
+        let schema = get_tool_schema("get_company_financials");
+        assert!(schema.is_some());
+
+        let schema = schema.unwrap();
+        assert_eq!(schema["type"], "object");
+        assert!(schema.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_get_tool_schema_nonexistent() {
+        let schema = get_tool_schema("nonexistent_tool");
+        assert!(schema.is_none());
+    }
+
+    // ==========================================================================
+    // Data Integrity Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_all_categories_have_metadata() {
+        // Verify every category has an entry in CATEGORIES
+        for cat in Category::all() {
+            assert!(
+                CATEGORIES.get(cat).is_some(),
+                "Category {:?} missing from CATEGORIES",
+                cat
+            );
+        }
+    }
+
+    #[test]
+    fn test_implemented_categories_have_tools() {
+        // For categories that have tools in TOOLS, verify consistency
+        let mut categories_with_tools: std::collections::HashSet<Category> =
+            std::collections::HashSet::new();
+        for (_, tool) in TOOLS.iter() {
+            categories_with_tools.insert(tool.category.clone());
+        }
+
+        // At minimum, we should have some categories implemented
+        assert!(
+            !categories_with_tools.is_empty(),
+            "No categories have tools implemented"
+        );
+
+        // Verify implemented categories have proper metadata
+        for cat in &categories_with_tools {
+            let cat_info = CATEGORIES.get(cat).unwrap();
+            assert!(
+                !cat_info.name.is_empty(),
+                "Category {:?} has empty name",
+                cat
+            );
+            assert!(
+                !cat_info.description.is_empty(),
+                "Category {:?} has empty description",
+                cat
+            );
+        }
+    }
+
+    #[test]
+    fn test_tool_schemas_have_required_fields() {
+        for (name, tool) in TOOLS.iter() {
+            let schema = &tool.input_schema;
+
+            // All tools should have type: object
+            assert_eq!(
+                schema["type"], "object",
+                "Tool {} should have type: object",
+                name
+            );
+
+            // All tools should have properties
+            assert!(
+                schema.get("properties").is_some(),
+                "Tool {} should have properties",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_search_result_structure() {
+        let result = search_tools("company", None, DetailLevel::FullSchema);
+
+        // Check the result has the expected structure
+        assert!(result.get("query").is_some());
+        assert!(result.get("match_count").is_some());
+        assert!(result.get("matches").is_some());
+
+        let matches = result["matches"].as_array().unwrap();
+        if !matches.is_empty() {
+            let first = &matches[0];
+            assert!(first.get("name").is_some());
+            assert!(first.get("category").is_some());
+            assert!(first.get("relevance_score").is_some());
+        }
     }
 }
