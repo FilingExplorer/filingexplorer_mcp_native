@@ -86,9 +86,9 @@ cd ../..
 # Create universal app bundle
 echo ""
 echo "Creating universal app bundle..."
-AARCH64_APP="target/aarch64-apple-darwin/release/bundle/macos/FilingExplorer Settings.app"
-X86_64_APP="target/x86_64-apple-darwin/release/bundle/macos/FilingExplorer Settings.app"
-UNIVERSAL_APP="target/universal-apple-darwin/release/bundle/macos/FilingExplorer Settings.app"
+AARCH64_APP="target/aarch64-apple-darwin/release/bundle/macos/FilingExplorer for Claude.app"
+X86_64_APP="target/x86_64-apple-darwin/release/bundle/macos/FilingExplorer for Claude.app"
+UNIVERSAL_APP="target/universal-apple-darwin/release/bundle/macos/FilingExplorer for Claude.app"
 
 mkdir -p "$(dirname "$UNIVERSAL_APP")"
 rm -rf "$UNIVERSAL_APP"
@@ -155,10 +155,10 @@ echo ""
 echo "Creating DMG..."
 DMG_DIR="target/universal-apple-darwin/release/bundle/dmg"
 mkdir -p "$DMG_DIR"
-DMG_PATH="$DMG_DIR/FilingExplorer Settings_0.1.0_universal.dmg"
+DMG_PATH="$DMG_DIR/FilingExplorer for Claude_0.2.0_universal.dmg"
 rm -f "$DMG_PATH"
 
-hdiutil create -volname "FilingExplorer Settings" \
+hdiutil create -volname "FilingExplorer for Claude" \
   -srcfolder "$UNIVERSAL_APP" \
   -ov -format UDZO \
   "$DMG_PATH"
